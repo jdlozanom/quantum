@@ -18,10 +18,21 @@
 from tensorflow_quantum.core import (append_circuit, get_expectation_op,
                                      get_sampled_expectation_op,
                                      get_sampling_op, get_state_op,
-                                     padded_to_ragged)
+                                     get_unitary_op, padded_to_ragged,
+                                     padded_to_ragged2d, resolve_parameters)
+
+# Import math ops.
+from tensorflow_quantum.core import math_ops as math
 
 # Re-label python module as layers module.
 import tensorflow_quantum.python.layers as layers
+
+# Import quantum_context getters and setters
+from tensorflow_quantum.python.quantum_context import (
+    # Context setting functions.
+    get_quantum_concurrent_op_mode,
+    set_quantum_concurrent_op_mode,
+)
 
 # Import utility functions for tensor operations & conversions.
 from tensorflow_quantum.python.util import (
@@ -39,6 +50,9 @@ import tensorflow_quantum.datasets as datasets
 # Import differentiators.
 import tensorflow_quantum.python.differentiators as differentiators
 
+# Import optimizers.
+import tensorflow_quantum.python.optimizers as optimizers
+
 # Python adds these symbols for resolution of above imports to
 # work. We get rid of them so that we don't have two paths to
 # things. For example: tfq.layers and tfq.python.layers
@@ -47,4 +61,4 @@ del python
 del core
 # pylint: enable=undefined-variable
 
-__version__ = '0.3.0'
+__version__ = '0.4.0'

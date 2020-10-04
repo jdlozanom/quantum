@@ -32,6 +32,11 @@ tensorflow::Status ParsePrograms(
     tensorflow::OpKernelContext* context, const std::string& input_name,
     std::vector<cirq::google::api::v2::Program>* programs);
 
+// Simplest Program proto parsing in 2D.
+tensorflow::Status ParsePrograms2D(
+    tensorflow::OpKernelContext* context, const std::string& input_name,
+    std::vector<std::vector<cirq::google::api::v2::Program>>* programs);
+
 // Parses a vector of programs along with another vector of programs to append
 tensorflow::Status GetProgramsAndProgramsToAppend(
     tensorflow::OpKernelContext* context,
@@ -53,6 +58,16 @@ tensorflow::Status GetProgramsAndNumQubits(
     std::vector<int>* num_qubits,
     std::vector<std::vector<tfq::proto::PauliSum>>* p_sums = nullptr);
 
+// Parses Cirq Program protos out of the 'circuit_specs' input Tensor. Also
+// resolves the QubitIds inside of the Program. This override also parses and
+// resolves other_programs. Ensuring all qubits found in programs[i] are also
+// found in all programs[i][j] for all j.
+tensorflow::Status GetProgramsAndNumQubits(
+    tensorflow::OpKernelContext* context,
+    std::vector<cirq::google::api::v2::Program>* programs,
+    std::vector<int>* num_qubits,
+    std::vector<std::vector<cirq::google::api::v2::Program>>* other_programs);
+
 // Parses PauliSum protos out of the 'pauli_sums' input tensor. Note this
 // function does NOT resolve QubitID's as any paulisum needs a reference
 // program to "discover" all of the active qubits and define the ordering.
@@ -71,9 +86,20 @@ tensorflow::Status GetPauliSums(
 tensorflow::Status GetSymbolMaps(tensorflow::OpKernelContext* context,
                                  std::vector<SymbolMap>* maps);
 
-// Parses gradients out of the 'grads' input Tensor.
-tensorflow::Status GetGradients(tensorflow::OpKernelContext* context,
-                                std::vector<std::vector<float>>* grads);
+// Parses the number of samples from the 'num_samples' input tensor.
+tensorflow::Status GetNumSamples(
+    tensorflow::OpKernelContext* context,
+    std::vector<std::vector<int>>* parsed_num_samples);
+
+// Parses the 'num_samples' input tensor when it is expected to only
+//   contain one element.
+tensorflow::Status GetIndividualSample(tensorflow::OpKernelContext* context,
+                                       int* n_samples);
+
+// Parses the downstream gradients tensor. Used by adjoint op.
+tensorflow::Status GetPrevGrads(
+    tensorflow::OpKernelContext* context,
+    std::vector<std::vector<float>>* parsed_prev_grads);
 
 }  // namespace tfq
 

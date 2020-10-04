@@ -37,55 +37,6 @@ class StateTest(parameterized.TestCase, tf.test.TestCase):
                                     expected_regex="junk is invalid"):
             state.State('junk')
 
-    def test_state_invalid_type_inputs(self):
-        """Test that state rejects bad inputs."""
-        state_calc = state.State()
-        with self.assertRaisesRegex(TypeError,
-                                    expected_regex="circuits cannot be parsed"):
-            state_calc('junk_circuit')
-
-        with self.assertRaisesRegex(
-                TypeError, expected_regex="symbol_values cannot be parsed"):
-            state_calc(cirq.Circuit(), symbol_values='junk')
-
-        with self.assertRaisesRegex(
-                TypeError, expected_regex="symbol_names cannot be parsed"):
-            state_calc(cirq.Circuit(), symbol_values=[], symbol_names='junk')
-
-        with self.assertRaisesRegex(TypeError, expected_regex="Cannot convert"):
-            state_calc(cirq.Circuit(),
-                       symbol_values=[['bad']],
-                       symbol_names=['name'])
-
-        with self.assertRaisesRegex(TypeError,
-                                    expected_regex="must be a string."):
-            state_calc(cirq.Circuit(),
-                       symbol_values=[[0.5]],
-                       symbol_names=[0.33333])
-
-        with self.assertRaisesRegex(ValueError,
-                                    expected_regex="must be unique."):
-            state_calc(cirq.Circuit(),
-                       symbol_values=[[0.5]],
-                       symbol_names=['duplicate', 'duplicate'])
-
-    def test_state_invalid_shape_inputs(self):
-        """Test that state rejects bad input shapes."""
-        state_calc = state.State()
-        with self.assertRaisesRegex(TypeError,
-                                    expected_regex="string or sympy.Symbol"):
-            state_calc(cirq.Circuit(), symbol_values=[[0.5]], symbol_names=[[]])
-
-        with self.assertRaisesRegex(Exception, expected_regex="rank 1"):
-            state_calc(cirq.Circuit(),
-                       symbol_values=[0.5],
-                       symbol_names=['name'])
-
-        with self.assertRaisesRegex(Exception, expected_regex="rank 2"):
-            state_calc([[cirq.Circuit()]],
-                       symbol_values=[[0.5]],
-                       symbol_names=['name'])
-
     @parameterized.parameters([{
         'backend': None
     }, {
@@ -125,6 +76,12 @@ class StateTest(parameterized.TestCase, tf.test.TestCase):
             state_calc(circuit,
                        symbol_names=['alpha'],
                        symbol_values=[[2.0, 4.0], [3.0, 5.0]])
+
+        with self.assertRaisesRegex(Exception, expected_regex=""):
+            # Wrong batch_size for symbol values.
+            state_calc([circuit],
+                       symbol_names=['alpha'],
+                       symbol_values=np.zeros((3, 1)))
 
     def test_state_basic_inputs(self):
         """Test that state ingests inputs correctly in simple settings."""

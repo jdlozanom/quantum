@@ -31,30 +31,50 @@ WF_SIM = cirq.sim.sparse_simulator.Simulator()
 DM_SIM = cirq.sim.density_matrix_simulator.DensityMatrixSimulator()
 
 EXPECTATION_OPS = [
-    circuit_execution_ops.get_expectation_op(backend=None),
-    circuit_execution_ops.get_expectation_op(backend=WF_SIM),
-    circuit_execution_ops.get_expectation_op(backend=DM_SIM)
+    circuit_execution_ops.get_expectation_op(backend=None,
+                                             quantum_concurrent=True),
+    circuit_execution_ops.get_expectation_op(backend=WF_SIM,
+                                             quantum_concurrent=True),
+    circuit_execution_ops.get_expectation_op(backend=DM_SIM,
+                                             quantum_concurrent=True),
+    # For timing interests C++ backend is tested in quantum_concurrent mode.
+    circuit_execution_ops.get_expectation_op(backend=None,
+                                             quantum_concurrent=False)
 ]
 
 SAMPLING_OPS = [
-    circuit_execution_ops.get_sampling_op(backend=None),
-    circuit_execution_ops.get_sampling_op(backend=WF_SIM),
-    circuit_execution_ops.get_sampling_op(backend=DM_SIM)
+    circuit_execution_ops.get_sampling_op(backend=None,
+                                          quantum_concurrent=True),
+    circuit_execution_ops.get_sampling_op(backend=WF_SIM,
+                                          quantum_concurrent=True),
+    circuit_execution_ops.get_sampling_op(backend=DM_SIM,
+                                          quantum_concurrent=True),
+    # For timing interests C++ backend is tested in quantum_concurrent mode.
+    circuit_execution_ops.get_sampling_op(backend=None,
+                                          quantum_concurrent=False)
 ]
 
 STATE_OPS = [
-    circuit_execution_ops.get_state_op(backend=None),
-    circuit_execution_ops.get_state_op(backend=WF_SIM),
-    circuit_execution_ops.get_state_op(backend=DM_SIM)
+    circuit_execution_ops.get_state_op(backend=None, quantum_concurrent=True),
+    circuit_execution_ops.get_state_op(backend=WF_SIM, quantum_concurrent=True),
+    circuit_execution_ops.get_state_op(backend=DM_SIM, quantum_concurrent=True),
+    # For timing interests C++ backend is tested in quantum_concurrent mode.
+    circuit_execution_ops.get_state_op(backend=None, quantum_concurrent=False)
 ]
 
 SAMPLED_EXPECTATION_OPS = [
-    circuit_execution_ops.get_sampled_expectation_op(backend=None),
-    circuit_execution_ops.get_sampled_expectation_op(backend=WF_SIM),
-    circuit_execution_ops.get_sampled_expectation_op(backend=DM_SIM)
+    circuit_execution_ops.get_sampled_expectation_op(backend=None,
+                                                     quantum_concurrent=True),
+    circuit_execution_ops.get_sampled_expectation_op(backend=WF_SIM,
+                                                     quantum_concurrent=True),
+    circuit_execution_ops.get_sampled_expectation_op(backend=DM_SIM,
+                                                     quantum_concurrent=True),
+    # For timing interests C++ backend is tested in quantum_concurrent mode.
+    circuit_execution_ops.get_sampled_expectation_op(backend=None,
+                                                     quantum_concurrent=False),
 ]
 
-SIMS = [WF_SIM, WF_SIM, DM_SIM]
+SIMS = [WF_SIM, WF_SIM, DM_SIM, WF_SIM]
 
 
 class OpGetterInputChecks(tf.test.TestCase):
@@ -78,6 +98,10 @@ class OpGetterInputChecks(tf.test.TestCase):
                 TypeError, expected_regex="a Cirq.SimulatesFinalState"):
             circuit_execution_ops.get_expectation_op(backend="junk")
 
+        with self.assertRaisesRegex(TypeError,
+                                    expected_regex="must be type bool."):
+            circuit_execution_ops.get_expectation_op(quantum_concurrent='junk')
+
     def test_get_sampled_expectation_inputs(self):
         """Test that get expectation only accepts inputs it should."""
         circuit_execution_ops.get_sampled_expectation_op()
@@ -93,6 +117,11 @@ class OpGetterInputChecks(tf.test.TestCase):
         with self.assertRaisesRegex(TypeError, expected_regex="a Cirq.Sampler"):
             circuit_execution_ops.get_sampled_expectation_op(backend="junk")
 
+        with self.assertRaisesRegex(TypeError,
+                                    expected_regex="must be type bool."):
+            circuit_execution_ops.get_sampled_expectation_op(
+                quantum_concurrent='junk')
+
     def test_get_samples_inputs(self):
         """Test that get_samples only accepts inputs it should."""
         circuit_execution_ops.get_sampling_op()
@@ -107,6 +136,10 @@ class OpGetterInputChecks(tf.test.TestCase):
         with self.assertRaisesRegex(TypeError,
                                     expected_regex="Expected a Cirq.Sampler"):
             circuit_execution_ops.get_sampling_op(backend="junk")
+
+        with self.assertRaisesRegex(TypeError,
+                                    expected_regex="must be type bool."):
+            circuit_execution_ops.get_sampling_op(quantum_concurrent='junk')
 
     def test_get_state_inputs(self):
         """Test that get_states only accepts inputs it should."""
@@ -125,6 +158,10 @@ class OpGetterInputChecks(tf.test.TestCase):
                     engine=mock_engine,
                     processor_id='test',
                     gate_set=cirq.google.XMON))
+
+        with self.assertRaisesRegex(TypeError,
+                                    expected_regex="must be type bool."):
+            circuit_execution_ops.get_state_op(quantum_concurrent='junk')
 
 
 class ExecutionOpsConsistentyTest(tf.test.TestCase, parameterized.TestCase):
@@ -215,6 +252,36 @@ class ExecutionOpsConsistentyTest(tf.test.TestCase, parameterized.TestCase):
             [[resolver[symbol]
               for symbol in symbol_names]
              for resolver in resolver_batch])
+
+        op_states = op(util.convert_to_tensor(circuit_batch), symbol_names,
+                       symbol_values_array).to_list()
+
+        cirq_states = batch_util.batch_calculate_state(circuit_batch,
+                                                       resolver_batch, sim)
+
+        self.assertAllClose(cirq_states, op_states, atol=1e-5, rtol=1e-5)
+
+    @parameterized.parameters(
+        list(
+            util.kwargs_cartesian_product(
+                **{
+                    'op_and_sim': [(op, sim) for (
+                        op,
+                        sim) in zip(STATE_OPS[:-2] +
+                                    [STATE_OPS[-1]], SIMS[:-2] + [SIMS[-1]])],
+                })))
+    def test_simulate_state_large(self, op_and_sim):
+        """Test a reasonably large and complex circuit."""
+        op, sim = op_and_sim
+        symbol_names = []
+        circuit_batch, resolver_batch = \
+            util.random_circuit_resolver_batch(
+                cirq.GridQubit.rect(4, 4), 5)
+
+        symbol_values_array = np.array(
+            [[resolver[symbol]
+              for symbol in symbol_names]
+             for resolver in resolver_batch]).astype(np.float32)
 
         op_states = op(util.convert_to_tensor(circuit_batch), symbol_names,
                        symbol_values_array).to_list()
@@ -353,7 +420,7 @@ class ExecutionOpsConsistentyTest(tf.test.TestCase, parameterized.TestCase):
 
         pauli_sums = util.random_pauli_sums(qubits, max_paulisum_length,
                                             BATCH_SIZE)
-        num_samples = [[1000]] * BATCH_SIZE
+        num_samples = [[10000]] * BATCH_SIZE
 
         op_expectations = op(
             util.convert_to_tensor(circuit_batch), symbol_names,

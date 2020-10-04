@@ -16,8 +16,10 @@
 import enum
 
 import cirq
+
 from tensorflow_quantum.core.ops import (cirq_ops, tfq_simulate_ops,
                                          tfq_utility_ops)
+from tensorflow_quantum.python import quantum_context
 
 
 class TFQWavefunctionSimulator(enum.Enum):
@@ -25,9 +27,19 @@ class TFQWavefunctionSimulator(enum.Enum):
     expectation = tfq_simulate_ops.tfq_simulate_expectation
     samples = tfq_simulate_ops.tfq_simulate_samples
     state = tfq_simulate_ops.tfq_simulate_state
+    sampled_expectation = tfq_simulate_ops.tfq_simulate_sampled_expectation
 
 
-def get_expectation_op(backend=None):
+def _check_quantum_concurrent(quantum_concurrent):
+    if not isinstance(quantum_concurrent, bool):
+        raise TypeError("quantum_concurrent must be type bool."
+                        " Given: {}".format(str(type(quantum_concurrent))))
+
+
+def get_expectation_op(
+        backend=None,
+        *,
+        quantum_concurrent=quantum_context.get_quantum_concurrent_op_mode()):
     """Get a TensorFlow op that will calculate batches of expectation values.
 
     This function produces a non-differentiable TF op that will calculate
@@ -66,9 +78,17 @@ def get_expectation_op(backend=None):
 
     Args:
         backend: Optional Python `object` that specifies what backend this op
-        should use when evaluating circuits. Can be any
-        `cirq.SimulatesFinalState`. If not provided the default C++ analytical
-        expectation calculation op is returned.
+            should use when evaluating circuits. Can be any
+            `cirq.SimulatesFinalState`. If not provided the default C++
+            analytical expectation calculation op is returned.
+        quantum_concurrent: Optional Python `bool`. True indicates that the
+            returned op should not block graph level parallelism on itself when
+            executing. False indicates that graph level parallelism on itself
+            should be blocked. Defaults to value specified in
+            `tfq.get_quantum_concurrent_op_mode` which defaults to True
+            (no blocking). This flag is only needed for advanced users when
+            using TFQ for very large simulations, or when running on a real
+            chip.
 
     Returns:
         A `callable` with the following signature:
@@ -96,11 +116,25 @@ def get_expectation_op(backend=None):
     """
 
     # TODO (mbbrough): investigate how the above docstring renders.
+    _check_quantum_concurrent(quantum_concurrent)
+
+    op = None
     if backend is None:
-        return TFQWavefunctionSimulator.expectation
+        op = TFQWavefunctionSimulator.expectation
 
     if isinstance(backend, cirq.SimulatesFinalState):
-        return cirq_ops._get_cirq_analytical_expectation(backend)
+        op = cirq_ops._get_cirq_analytical_expectation(backend)
+
+    if op is not None:
+        if quantum_concurrent is True:
+            # Return an op that does not block graph level parallelism.
+            return lambda programs, symbol_names, symbol_values, pauli_sums: \
+                op(programs, symbol_names, symbol_values, pauli_sums)
+
+        # Return an op that does block graph level parallelism.
+        return lambda programs, symbol_names, symbol_values, pauli_sums: \
+            quantum_context._GLOBAL_OP_LOCK.execute(lambda: op(
+                programs, symbol_names, symbol_values, pauli_sums))
 
     if isinstance(backend, (cirq.SimulatesSamples, cirq.Sampler)):
         raise NotImplementedError("Sample-based expectation is not supported."
@@ -111,7 +145,10 @@ def get_expectation_op(backend=None):
                     " or None.".format(backend))
 
 
-def get_sampling_op(backend=None):
+def get_sampling_op(
+        backend=None,
+        *,
+        quantum_concurrent=quantum_context.get_quantum_concurrent_op_mode()):
     """Get a Tensorflow op that produces samples from given quantum circuits.
 
     This function produces a non-differentiable op that will calculate
@@ -141,6 +178,14 @@ def get_sampling_op(backend=None):
         backend: Optional Python `object` that specifies what backend this op
             should use when evaluating circuits. Can be any `cirq.Sampler`. If
             not provided the default C++ sampling op is returned.
+        quantum_concurrent: Optional Python `bool`. True indicates that the
+            returned op should not block graph level parallelism on itself when
+            executing. False indicates that graph level parallelism on itself
+            should be blocked. Defaults to value specified in
+            `tfq.get_quantum_concurrent_op_mode` which defaults to True
+            (no blocking). This flag is only needed for advanced users when
+            using TFQ for very large simulations, or when running on a real
+            chip.
 
     Returns:
         A `callable` with the following signature:
@@ -167,21 +212,35 @@ def get_sampling_op(backend=None):
     """
 
     # TODO (mbbrough): investigate how the above docstring renders.
-    if backend is None:
-        return lambda programs, symbol_names, symbol_values, num_samples: \
-        tfq_utility_ops.padded_to_ragged(TFQWavefunctionSimulator.samples(
-            programs, symbol_names, symbol_values, num_samples))
+    _check_quantum_concurrent(quantum_concurrent)
 
-    if isinstance(backend, (cirq.SimulatesSamples, cirq.Sampler)):
+    op = None
+    if backend is None:
+        op = TFQWavefunctionSimulator.samples
+
+    if isinstance(backend, cirq.Sampler):
+        op = cirq_ops._get_cirq_samples(backend)
+
+    if op is not None:
+        if quantum_concurrent is True:
+            # Return an op that does not block graph level parallelism.
+            return lambda programs, symbol_names, symbol_values, num_samples: \
+                tfq_utility_ops.padded_to_ragged(
+                    op(programs, symbol_names, symbol_values, num_samples))
+
         return lambda programs, symbol_names, symbol_values, num_samples: \
-        tfq_utility_ops.padded_to_ragged(cirq_ops._get_cirq_samples(backend)(
-            programs, symbol_names, symbol_values, num_samples))
+            quantum_context._GLOBAL_OP_LOCK.execute(
+                lambda: tfq_utility_ops.padded_to_ragged(op(
+                    programs, symbol_names, symbol_values, num_samples)))
 
     raise TypeError("Backend {} is invalid. Expected a Cirq.Sampler "
                     "or None.".format(backend))
 
 
-def get_state_op(backend=None):
+def get_state_op(
+        backend=None,
+        *,
+        quantum_concurrent=quantum_context.get_quantum_concurrent_op_mode()):
     """Get a TensorFlow op that produces states from given quantum circuits.
 
     This function produces a non-differentiable op that will calculate
@@ -211,6 +270,14 @@ def get_state_op(backend=None):
             should use when evaluating circuits. Can be any
             `cirq.SimulatesFinalState`. If not provided, the default C++
             wavefunction simulator will be used.
+        quantum_concurrent: Optional Python `bool`. True indicates that the
+            returned op should not block graph level parallelism on itself when
+            executing. False indicates that graph level parallelism on itself
+            should be blocked. Defaults to value specified in
+            `tfq.get_quantum_concurrent_op_mode` which defaults to True
+            (no blocking). This flag is only needed for advanced users when
+            using TFQ for very large simulations, or when running on a real
+            chip.
 
     Returns:
         A `callable` with the following signature:
@@ -234,22 +301,36 @@ def get_state_op(backend=None):
     """
 
     # TODO (mbbrough): investigate how the above docstring renders.
+    _check_quantum_concurrent(quantum_concurrent)
+
+    op = None
     if backend is None:
-        return lambda programs, symbol_names, symbol_values: \
-        tfq_utility_ops.padded_to_ragged(TFQWavefunctionSimulator.state(
-            programs, symbol_names, symbol_values))
+        op = TFQWavefunctionSimulator.state
 
     if isinstance(backend, (cirq.SimulatesFinalState)):
+        op = cirq_ops._get_cirq_simulate_state(backend)
+
+    if op is not None:
+        if quantum_concurrent is True:
+            # Return an op that does not block graph level parallelism.
+            return lambda programs, symbol_names, symbol_values: \
+                tfq_utility_ops.padded_to_ragged(
+                    op(programs, symbol_names, symbol_values))
+
+        # Return an op that does block graph level parallelism.
         return lambda programs, symbol_names, symbol_values: \
-        tfq_utility_ops.padded_to_ragged(
-            cirq_ops._get_cirq_simulate_state(backend)(
-                programs, symbol_names, symbol_values))
+            quantum_context._GLOBAL_OP_LOCK.execute(
+                lambda: tfq_utility_ops.padded_to_ragged(op(
+                    programs, symbol_names, symbol_values)))
 
     raise TypeError("Backend {} is invalid. Expected a Cirq.SimulatesFinalState"
                     " or None.".format(backend))
 
 
-def get_sampled_expectation_op(backend=None):
+def get_sampled_expectation_op(
+        backend=None,
+        *,
+        quantum_concurrent=quantum_context.get_quantum_concurrent_op_mode()):
     """Get a TensorFlow op that will calculate sampled expectation values.
 
     This function produces a non-differentiable TF op that will calculate
@@ -290,8 +371,17 @@ def get_sampled_expectation_op(backend=None):
     ... )
 
     Args:
-        backend: Python `object` that specifies what backend this op should use
-            when evaluating circuits. It only accepts `cirq.Sampler`.
+        backend: Optional Python `object` that specifies what backend this op
+            should use when evaluating circuits. Can be any `cirq.Sampler`. If
+            not provided the default C++ sampled expectation op is returned.
+        quantum_concurrent: Optional Python `bool`. True indicates that the
+            returned op should not block graph level parallelism on itself when
+            executing. False indicates that graph level parallelism on itself
+            should be blocked. Defaults to value specified in
+            `tfq.get_quantum_concurrent_op_mode` which defaults to True
+            (no blocking). This flag is only needed for advanced users when
+            using TFQ for very large simulations, or when running on a real
+            chip.
 
     Returns:
         A `callable` with the following signature:
@@ -311,12 +401,10 @@ def get_sampled_expectation_op(backend=None):
         pauli_sums: `tf.Tensor` of strings with shape [batch_size, n_ops]
             containing the string representation of the operators that will
             be used on all of the circuits in the expectation calculations.
-        num_samples: `tf.Tensor` with `n_samples[i][j]` is equal to the
+        num_samples: `tf.Tensor` with `num_samples[i][j]` is equal to the
             number of samples to draw in each term of `pauli_sums[i][j]`
-            when estimating the expectation. It can also be tiled up to the
-            shape of pauli_sums by broadcasting if tf.shape(num_samples)[0]
-            or tf.shape(num_samples)[1] is 1 and the other dimension is the
-            same with that of pauli_sums.
+            when estimating the expectation. Therefore, `num_samples` must
+            have the same shape as `pauli_sums`.
 
         Returns:
             `tf.Tensor` with shape [batch_size, n_ops] that holds the
@@ -324,14 +412,33 @@ def get_sampled_expectation_op(backend=None):
                 (after resolving the corresponding parameters in).
     """
     # TODO (mbbrough): investigate how the above docstring renders.
+    _check_quantum_concurrent(quantum_concurrent)
+
+    op = None
     if backend is None:
-        # TODO(zaqqwerty, jaeyoo): Remove comment once sampled_expectation
-        # is implemented, and update docstring
-        # return TFQWavefunctionSimulator.sampled_expectation
-        return cirq_ops._get_cirq_sampled_expectation(cirq.sim.Simulator())
+        op = TFQWavefunctionSimulator.sampled_expectation
 
     if isinstance(backend, cirq.Sampler):
-        return cirq_ops._get_cirq_sampled_expectation(backend)
+        op = cirq_ops._get_cirq_sampled_expectation(backend)
+
+    if op is not None:
+        if quantum_concurrent is True:
+            # Return an op that does not block graph level parallelism.
+            return lambda programs, symbol_names, symbol_values, pauli_sums, \
+                num_samples: op(programs,
+                                symbol_names,
+                                symbol_values,
+                                pauli_sums,
+                                num_samples)
+
+        # Return an op that does block graph level parallelism.
+        return lambda programs, symbol_names, symbol_values, pauli_sums, \
+            num_samples: quantum_context._GLOBAL_OP_LOCK.execute(
+                lambda: op(programs,
+                           symbol_names,
+                           symbol_values,
+                           pauli_sums,
+                           num_samples))
 
     raise TypeError(
         "Backend {} is invalid. Expected a Cirq.Sampler or None.".format(

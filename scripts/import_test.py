@@ -28,12 +28,20 @@ def test_imports():
     _ = tfq.get_sampled_expectation_op
     _ = tfq.get_sampling_op
     _ = tfq.get_state_op
+    _ = tfq.get_unitary_op
     _ = tfq.append_circuit
     _ = tfq.padded_to_ragged
+    _ = tfq.padded_to_ragged2d
+    _ = tfq.resolve_parameters
+
+    # Math ops.
+    _ = tfq.math.inner_product
 
     # Util functions.
     _ = tfq.convert_to_tensor
+    _ = tfq.get_quantum_concurrent_op_mode
     _ = tfq.from_tensor
+    _ = tfq.set_quantum_concurrent_op_mode
     _ = tfq.util.get_supported_gates
     _ = tfq.util.exponential
 
@@ -47,15 +55,20 @@ def test_imports():
     _ = tfq.layers.PQC
 
     # Differentiators.
+    _ = tfq.differentiators.Adjoint
     _ = tfq.differentiators.ForwardDifference
     _ = tfq.differentiators.CentralDifference
     _ = tfq.differentiators.LinearCombination
     _ = tfq.differentiators.ParameterShift
-    _ = tfq.differentiators.SGDifferentiator
     _ = tfq.differentiators.Differentiator
 
     # Datasets.
     _ = tfq.datasets.excited_cluster_states
+    _ = tfq.datasets.tfi_chain
+    _ = tfq.datasets.xxz_chain
+
+    #Optimizers
+    _ = tfq.optimizers.rotosolve_minimize
 
 
 if __name__ == "__main__":

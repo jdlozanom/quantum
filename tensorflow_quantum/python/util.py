@@ -51,9 +51,17 @@ def random_symbol_circuit(qubits,
                           n_moments=15,
                           p=0.9,
                           include_scalars=True):
-    """Generate a random circuit including some parameterized gates."""
+    """Generate a random circuit including some parameterized gates.
+
+    Symbols are randomly included in the gates of the first `n_moments` moments
+    of the resulting circuit.  Then, parameterized H gates are added as
+    subsequent moments for any remaining unused symbols.
+    """
     supported_gates = get_supported_gates()
     circuit = cirq.testing.random_circuit(qubits, n_moments, p, supported_gates)
+    random_symbols = list(symbols)
+    random.shuffle(random_symbols)
+    location = 0
 
     for i in range(len(circuit)):
         if np.random.random() < p:
@@ -63,9 +71,18 @@ def random_symbol_circuit(qubits,
             if isinstance(op, cirq.IdentityGate):
                 circuit[:i] += op.on(*locs)
             else:
-                circuit[:i] += (
-                    op**((np.random.random() if include_scalars else 1.0) *
-                         sympy.Symbol(np.random.choice(symbols)))).on(*locs)
+                circuit[:i] += (op**(
+                    (np.random.random() if include_scalars else 1.0) *
+                    sympy.Symbol(random_symbols[location % len(random_symbols)])
+                )).on(*locs)
+                location += 1
+
+    # Use the rest of the symbols
+    while location < len(random_symbols):
+        circuit += cirq.Circuit(
+            cirq.H(qubits[0])**sympy.Symbol(random_symbols[location]))
+        location += 1
+
     return circuit
 
 
@@ -246,7 +263,7 @@ def from_tensor(tensor_to_convert):
     if isinstance(tensor_to_convert, tf.Tensor):
         tensor_to_convert = tensor_to_convert.numpy()
     if not isinstance(tensor_to_convert, (np.ndarray, list, tuple)):
-        raise TypeError("tensor_to_convert recieved bad "
+        raise TypeError("tensor_to_convert received bad "
                         "type {}".format(type(tensor_to_convert)))
     tensor_to_convert = np.array(tensor_to_convert)
     python_items = np.empty(tensor_to_convert.shape, dtype=object)
@@ -366,8 +383,8 @@ def _many_clifford_to_many_z(pauli_sum):
             # It is identical to the conjugate of Phase and Hadamard gate up to
             # global phase. This global phase difference is gone with
             # multiplication of hermition conjugate later.
-            gate_list.append(cirq.Rx(np.pi / 2)(qubit))
-            conjugate_list.append(cirq.Rx(-np.pi / 2)(qubit))
+            gate_list.append(cirq.rx(np.pi / 2)(qubit))
+            conjugate_list.append(cirq.rx(-np.pi / 2)(qubit))
     return gate_list, conjugate_list[::-1]
 
 
@@ -399,7 +416,7 @@ def check_commutability(pauli_sum):
     """
     for term1 in pauli_sum:
         for term2 in pauli_sum:
-            if not term1.commutes_with(term2):
+            if not cirq.commutes(term1, term2):
                 raise ValueError("Given an operator has non-commutable "
                                  "terms, whose exponentiation is not "
                                  "supported yet: {} and {}".format(
@@ -430,8 +447,9 @@ def exponential(operators, coefficients=None):
     handling of Trotterization and convergence, which is not supported yet.
 
     Args:
-        operators: Python `list` of `cirq.PauliSum` or `cirq.PauliString` object
-            to be exponentiated. Here are simple examples.
+        operators: Python `list` or `tuple` of `cirq.PauliSum` or
+            `cirq.PauliString` objects to be exponentiated.
+            Here are simple examples.
             Let q = cirq.GridQubit(0, 0)
             E.g. operator = 0.5 * X(q) -> exp(-i * 0.5 * X(q))
                  operator = 0.5 * cirq.PauliString({q: cirq.I})
@@ -445,13 +463,13 @@ def exponential(operators, coefficients=None):
             and `coefficients`.
     """
     # Ingest operators.
-    if not isinstance(operators, (list, tuple, np.ndarray)):
+    if not isinstance(operators, (list, tuple)):
         raise TypeError("operators is not a list of operators.")
 
     if not all(
             isinstance(x, (cirq.PauliSum, cirq.PauliString))
             for x in operators):
-        raise TypeError("Each element in coefficients must be a float or a "
+        raise TypeError("Each element in operators must be a "
                         "cirq.PauliSum or cirq.PauliString object.")
 
     # Ingest coefficients.
@@ -492,9 +510,9 @@ def exponential(operators, coefficients=None):
             check_commutability(pauli_sum)
         for op in pauli_sum:
             if abs(op.coefficient.imag) > 1e-9:
-                raise ValueError('exponential only supports real '
-                                 'coefficients: got '
-                                 '{}'.format(op.coefficient))
+                raise TypeError('exponential only supports real '
+                                'coefficients: got '
+                                '{}'.format(op.coefficient))
             # Create a circuit with exponentiating `op` with param
             c = op.coefficient.real
             if len(op.gate.pauli_mask) == 0:
@@ -512,9 +530,9 @@ def exponential(operators, coefficients=None):
             # Set of gates to convert many Z's into a single Z using CNOTs.
             w, w_dagger = _many_z_to_single_z(k, op)
 
-            # cirq.Rz(2*theta) = exp(-i*0.5*(2*theta)*Z) == exp(-i*theta*Z)
+            # cirq.rz(2*theta) = exp(-i*0.5*(2*theta)*Z) == exp(-i*theta*Z)
             # focal point of the CNOT ladder.
-            exp_circuit = u + w + [cirq.Rz(2 * param * c)(k)
+            exp_circuit = u + w + [cirq.rz(2 * param * c)(k)
                                   ] + w_dagger + u_dagger
             circuit += cirq.Circuit(exp_circuit)
     return circuit

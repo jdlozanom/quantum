@@ -18,9 +18,10 @@ import collections
 import itertools
 import os
 
+import multiprocessing as mp
+from multiprocessing.pool import Pool as ProcessPool
 import numpy as np
 import cirq
-import pathos
 
 from tensorflow_quantum.core.serialize import serializer
 
@@ -117,7 +118,7 @@ def _make_complex_view(shape, init_val):
     flattened_size = 1
     for dim_size in shape:
         flattened_size *= dim_size
-    shared_mem_array = pathos.helpers.mp.RawArray('f', flattened_size)
+    shared_mem_array = mp.RawArray('f', flattened_size)
     np_view = np.frombuffer(shared_mem_array, dtype=np.float32).reshape(shape)
     np.copyto(np_view, data)
     return shared_mem_array
@@ -158,7 +159,7 @@ def _make_simple_view(shape, init_val, dtype, c_code):
     flattened_size = 1
     for dim_size in shape:
         flattened_size *= dim_size
-    shared_mem_array = pathos.helpers.mp.RawArray(c_code, flattened_size)
+    shared_mem_array = mp.RawArray(c_code, flattened_size)
     np_view = np.frombuffer(shared_mem_array, dtype=dtype).reshape(shape)
     np.copyto(np_view, data)
     return shared_mem_array
@@ -186,7 +187,7 @@ def _convert_simple_view_to_result(view, dtype, shape):
 
 
 def _prep_pool_input_args(indices, *args, slice_args=True):
-    """Break down a set of indices, and optinal args into a generator
+    """Break down a set of indices, and optional args into a generator
     of length cpu_count."""
     block_size = int(np.ceil(len(indices) / os.cpu_count()))
     for i in range(0, len(indices), block_size):
@@ -370,14 +371,13 @@ def batch_calculate_state(circuits, param_resolvers, simulator):
     _validate_inputs(circuits, param_resolvers, simulator, 'analytic')
 
     biggest_circuit = max(len(circuit.all_qubits()) for circuit in circuits)
-    if isinstance(simulator,
-                  cirq.sim.density_matrix_simulator.DensityMatrixSimulator):
+    if isinstance(simulator, cirq.DensityMatrixSimulator):
         return_mem_shape = (len(circuits), 1 << biggest_circuit,
                             1 << biggest_circuit)
         post_process = lambda x: x.final_density_matrix
-    elif isinstance(simulator, cirq.sim.sparse_simulator.Simulator):
+    elif isinstance(simulator, cirq.Simulator):
         return_mem_shape = (len(circuits), 1 << biggest_circuit)
-        post_process = lambda x: x.final_state
+        post_process = lambda x: x.final_state_vector
     else:
         raise TypeError('Simulator {} is not supported by '
                         'batch_calculate_state.'.format(type(simulator)))
@@ -385,10 +385,10 @@ def batch_calculate_state(circuits, param_resolvers, simulator):
     shared_array = _make_complex_view(return_mem_shape, -2)
     input_args = _prep_pool_input_args(range(len(circuits)), circuits,
                                        param_resolvers)
-    with pathos.pools._ProcessPool(processes=None,
-                                   initializer=_setup_dict,
-                                   initargs=(shared_array, return_mem_shape,
-                                             simulator, post_process)) as pool:
+    with ProcessPool(processes=None,
+                     initializer=_setup_dict,
+                     initargs=(shared_array, return_mem_shape, simulator,
+                               post_process)) as pool:
 
         pool.starmap(_state_worker_func, list(input_args))
 
@@ -439,12 +439,11 @@ def batch_calculate_expectation(circuits, param_resolvers, ops, simulator):
                                 ' Given: {}'.format(type(x)))
 
     return_mem_shape = (len(circuits), len(ops[0]))
-    if isinstance(simulator,
-                  cirq.sim.density_matrix_simulator.DensityMatrixSimulator):
+    if isinstance(simulator, cirq.DensityMatrixSimulator):
         post_process = lambda op, state, order: sum(
             x._expectation_from_density_matrix_no_validation(
                 state.final_density_matrix, order) for x in op).real
-    elif isinstance(simulator, cirq.sim.sparse_simulator.Simulator):
+    elif isinstance(simulator, cirq.Simulator):
         post_process = \
             lambda op, state, order: op.expectation_from_wavefunction(
                 state.final_state, order).real
@@ -469,10 +468,10 @@ def batch_calculate_expectation(circuits, param_resolvers, ops, simulator):
                               ops,
                               slice_args=False))
 
-    with pathos.pools._ProcessPool(processes=None,
-                                   initializer=_setup_dict,
-                                   initargs=(shared_array, return_mem_shape,
-                                             simulator, post_process)) as pool:
+    with ProcessPool(processes=None,
+                     initializer=_setup_dict,
+                     initargs=(shared_array, return_mem_shape, simulator,
+                               post_process)) as pool:
 
         pool.starmap(_analytical_expectation_worker_func, input_args)
 
@@ -560,10 +559,10 @@ def batch_calculate_sampled_expectation(circuits, param_resolvers, ops,
                               n_samples,
                               slice_args=False))
 
-    with pathos.pools._ProcessPool(processes=None,
-                                   initializer=_setup_dict,
-                                   initargs=(shared_array, return_mem_shape,
-                                             simulator, None)) as pool:
+    with ProcessPool(processes=None,
+                     initializer=_setup_dict,
+                     initargs=(shared_array, return_mem_shape, simulator,
+                               None)) as pool:
 
         pool.starmap(_sample_expectation_worker_func, input_args)
 
@@ -614,13 +613,12 @@ def batch_sample(circuits, param_resolvers, n_samples, simulator):
     return_mem_shape = (len(circuits), n_samples, biggest_circuit)
     shared_array = _make_simple_view(return_mem_shape, -2, np.int32, 'i')
 
-    if isinstance(simulator,
-                  cirq.sim.density_matrix_simulator.DensityMatrixSimulator):
+    if isinstance(simulator, cirq.DensityMatrixSimulator):
         post_process = lambda state, size, n_samples: \
             cirq.sample_density_matrix(
                 state.final_density_matrix, [i for i in range(size)],
                 repetitions=n_samples)
-    elif isinstance(simulator, cirq.sim.sparse_simulator.Simulator):
+    elif isinstance(simulator, cirq.Simulator):
         post_process = lambda state, size, n_samples: cirq.sample_state_vector(
             state.final_state, list(range(size)), repetitions=n_samples)
     else:
@@ -631,10 +629,10 @@ def batch_sample(circuits, param_resolvers, n_samples, simulator):
         _prep_pool_input_args(range(len(circuits)), circuits, param_resolvers,
                               [n_samples] * len(circuits)))
 
-    with pathos.pools._ProcessPool(processes=None,
-                                   initializer=_setup_dict,
-                                   initargs=(shared_array, return_mem_shape,
-                                             simulator, post_process)) as pool:
+    with ProcessPool(processes=None,
+                     initializer=_setup_dict,
+                     initargs=(shared_array, return_mem_shape, simulator,
+                               post_process)) as pool:
 
         pool.starmap(_sample_worker_func, input_args)
 
